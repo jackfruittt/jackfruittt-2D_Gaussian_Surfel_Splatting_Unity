@@ -1,27 +1,38 @@
-# 2D Gaussian Surfel Splatting (Unity)
+# Streaming RGB-D Splat Primitives in Unity
 
-A method for rendering a live RGB-D point cloud in Unity as oriented Gaussian disks (surfels)
-rather than points. Each depth pixel is drawn as a small disk lying on the local surface, which
-fills the inter-point gaps and gives a more continuous surface than a raw point cloud.
+A comparison of rendering primitives for a live RGB-D point cloud in Unity: plain points, flat
+quads, camera-facing billboards, and surface-oriented 2D Gaussian surfels. Each depth pixel is
+turned into a primitive every frame, straight from the sensor data, and the primitives are
+compared on visual completeness and render cost.
 
 This repository documents the approach and results; the source is not published.
 
 ### Motivation
 
-Streamed point clouds become sparse at close range and oblique viewing angles: the points
-separate and the surface reads as gaps. Replacing each point with a surface-aligned disk covers
-those gaps, so the surface stays continuous from off-axis viewpoints where a plain point stream
-degrades.
+This started as a 2D Gaussian surfel renderer. Streamed point clouds go sparse at close range
+and at oblique angles (the points separate and the surface reads as gaps), and orienting a small
+disk to the local surface looked like the way to keep it continuous. As more of the literature
+came into view, the question turned comparative rather than advocative: how much does the choice
+of primitive actually matter for live RGB-D, and is the surface-oriented surfel worth its cost
+over simpler options? That comparison is what this repo documents.
 
 ### Scope
 
-Surfel splatting in the classical (EWA) sense. Each splat is a flat 2D Gaussian on the surface,
-derived directly from the depth and colour frames.
+Every primitive is generated directly from the depth and colour frames, per frame, with no
+training, no network, no spherical harmonics, and no per-scene optimisation. This is the live,
+sensor-driven regime, not the trained novel-view-synthesis regime that 3DGS / 2DGS target. "2D
+Gaussian" here means the planar disk primitive (a flat 2D Gaussian on the surface), as opposed
+to a volumetric 3D Gaussian.
 
-This is not the trained 2DGS / 3DGS used for novel-view synthesis: nothing is optimised, there
-is no network and no spherical harmonics. Position, size, orientation and colour are taken from
-the sensor data. "2D" refers to the planar disk primitive, as opposed to a volumetric 3D
-Gaussian.
+### Background
+
+The link between billboards and 2D Gaussian splats is already recognised in the literature.
+Weiss & Bradley's *Gaussian Billboards* (DisneyResearch, 2024) and Svitov et al.'s *BBSplat*
+both note that a 2DGS primitive is essentially a billboard, a flat oriented scaled 2D quad, with
+a Gaussian-modulated opacity, and extend 2DGS with per-splat textures. Those are trained,
+offline reconstruction methods aimed at novel-view-synthesis quality. This project sits in the
+opposite corner: no training, real-time, fed by a live depth sensor. It borrows the primitives,
+not the optimisation, and asks which one is actually worth using in that streaming setting.
 
 ## Pipeline
 
@@ -48,6 +59,19 @@ Two modes are provided: the surface-oriented disks above, and a simpler baseline
 point as a flat quad, either camera-facing (a billboard, always facing the viewer) or offset in
 the sensor image plane (which foreshortens edge-on).
 
+## Complexity
+
+N = primitives per frame (depth pixels after decimation). Everything in this repo is O(N) per
+frame with no sort and no training; the primitives differ only by constant factors. The trained
+methods are the opposite regime: a per-scene optimisation, plus a per-frame depth sort for the
+alpha-blended ones.
+
+| approach | per-frame | orient | fragment | sort | train |
+|---|---|---|---|---|---|
+| point / flat quad | O(N) | none | flat colour | none | none |
+| camera-facing billboard | O(N) | view-facing | flat colour | none | none |
+| 2D Gaussian surfel | O(N) | surface (O(1)/px) | Gaussian | none | none |
+
 ## Results
 
 A pre-planned route was recorded and replayed for each stream to keep the viewing path
@@ -60,14 +84,14 @@ Three primitives are compared: a flat image-plane quad (the naive baseline), sur
 
 The flat quad foreshortens at oblique angles and leaves visible gaps up close and side-on. Both
 the surfels and the billboard remove this. The surfels run at roughly 30 to 45 render fps; the
-billboard is comparable (about 30 to 40) and, in these scenes, looks as good or better while
-being far simpler. The flat quad is faster (40 to 60) only by doing and showing less.
+billboard is comparable (about 30 to 40) and holds up visually while being far simpler. The flat
+quad is faster (40 to 60) only by doing and showing less.
 
-In short, orienting splats to the surface did not visibly help here over a view-facing
-billboard: the surfels' theoretical advantages (correct occlusion, anisotropic fill on grazing
-surfaces) were not significant in this streaming RGB-D setting, and they cost more and add some
-temporal instability. The billboard figures are also unoptimised (it still renders in a
-transparent, depth-write-off pass), so it could be made faster still.
+In short, for raw coverage the two are close, but the surface orientation does show up as better
+object shape: 2DGS holds form and occludes correctly as the view moves off-axis, where the
+billboard faces the viewer and reads more like a flat card. That shape edge costs extra compute
+and adds some temporal instability. The billboard figures are also unoptimised (it still renders
+in a transparent, depth-write-off pass), so it could be made faster still.
 
 The camera stream rate is unchanged across modes, as expected (sensor-bound, not render-bound).
 All clips loop. The 2D Gaussian (Kalman) and billboard clips play at 1x; the other clips are
@@ -113,3 +137,37 @@ All clips loop. The 2D Gaussian (Kalman) and billboard clips play at 1x; the oth
 
 ### Settings
 <p align="center"><img src="media/settings.png" alt="Inspector settings" width="600"></p>
+
+## Conclusion
+
+None of this is new. The primitives are all known, and 2DGS being basically a billboard with a
+Gaussian falloff is already in the literature. The work was building them in Unity and comparing
+them like-for-like on a live RGB-D stream, no training, no fitted scene.
+
+It depends. Both clearly beat the flat quad. For just filling the surface, a camera-facing
+billboard does about as well as 2DGS, it's simpler, and it doesn't flicker like the tilted disks.
+It's slightly slower right now, but only because it's drawn transparent, so nothing gets z-culled
+and every overlapping fragment gets shaded. The billboard itself is cheaper, drawing it opaque
+would make it faster than 2DGS.
+
+2DGS still wins on one thing: shape. The disks sit on the actual surface, so objects keep their
+shape and block each other correctly as you move around them. Billboards always face the camera,
+so off-angle they look flatter, more like cards. So orienting the splats does buy something,
+better 3D shape, just at the cost of more compute and some instability.
+
+Rough rule of thumb:
+- **Billboard** if you mainly want a complete, stable, cheap point cloud viewed roughly head-on,
+  on tight hardware (e.g. Quest).
+- **2DGS** if you're orbiting objects and care about their shape and occlusion from off-axis, and
+  can spend the extra compute.
+
+All built from scratch in Unity, shaders not published here.
+
+## References
+
+- Pfister et al., *Surfels: Surface Elements as Rendering Primitives*, SIGGRAPH 2000.
+- Zwicker et al., *Surface Splatting*, SIGGRAPH 2001; *EWA Splatting*, IEEE TVCG 2002.
+- Kerbl et al., *3D Gaussian Splatting for Real-Time Radiance Field Rendering*, SIGGRAPH 2023. The trained radiance-field method this is positioned against.
+- Huang et al., *2D Gaussian Splatting for Geometrically Accurate Radiance Fields*, SIGGRAPH 2024. The oriented-disk primitive.
+- Weiss & Bradley, *Gaussian Billboards: Expressive 2D Gaussian Splatting with Textures*, DisneyResearch, arXiv 2024. Draws the 2DGS-equals-billboard link; adds per-splat textures (trained, offline).
+- Svitov et al., *BBSplat: Learnable Textured Primitives for Efficient 2D Gaussian Splatting*, arXiv 2024. <https://github.com/david-svitov/BBSplat>
