@@ -53,7 +53,7 @@ consistent between runs. All settings were held constant; only the feature under
 enabled/disabled. Object detection was CPU-bound throughout (no GPU/OpenVINO), so that overhead
 is included in its figures.
 
-Clips are 2x speed and loop.
+Clips are 1.5x speed and loop.
 
 ### Base point cloud
 
