@@ -1,3 +1,8 @@
 # OS
 .DS_Store
 Thumbs.db
+
+# Demo videos live as GitHub attachments, not in the repo (keeps it light).
+# settings.png and other images are fine to commit.
+media/*.webm
+media/*.mp4

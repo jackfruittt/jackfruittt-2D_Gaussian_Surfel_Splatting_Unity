@@ -1,48 +1,81 @@
 # 2D Gaussian Surfel Splatting (Unity)
 
-An approach to drawing a live RGB-D point cloud as little Gaussian disks (surfels) in Unity
-instead of dots. Each depth pixel gets a small disk that lies on the surface, which fills the
-gaps between points so it looks solid instead of like a cloud of dots.
+A method for rendering a live RGB-D point cloud in Unity as oriented Gaussian disks (surfels)
+rather than points. Each depth pixel is drawn as a small disk lying on the local surface, which
+fills the inter-point gaps and gives a more continuous surface than a raw point cloud.
 
-This repo is a writeup of the approach and results. The code isn't published.
+This repository documents the approach and results; the source is not published.
 
-### Why
+### Motivation
 
-Point clouds go sparse when you get close or look from the side. The dots spread out and you
-see through them. Disks instead of dots cover the gaps, so the surface holds up from those
-off-axis views (close up, side-on) where a normal streamed cloud just falls apart.
+Streamed point clouds become sparse at close range and oblique viewing angles: the points
+separate and the surface reads as gaps. Replacing each point with a surface-aligned disk covers
+those gaps, so the surface stays continuous from off-axis viewpoints where a plain point stream
+degrades.
 
-### What this is
+### Scope
 
-Surfel splatting, the old-school kind. Each splat is a flat 2D Gaussian sitting on the surface,
-made straight from the depth and colour frames.
+Surfel splatting in the classical (EWA) sense. Each splat is a flat 2D Gaussian on the surface,
+derived directly from the depth and colour frames.
 
-Not the trained 2DGS / 3DGS people use for novel-view synthesis. Nothing is trained or
-optimized, no network, no spherical harmonics. Position, size, orientation and colour all come
-off the sensor frames. "2D" just means a flat disk, not a 3D blob.
+This is not the trained 2DGS / 3DGS used for novel-view synthesis: nothing is optimised, there
+is no network and no spherical harmonics. Position, size, orientation and colour are taken from
+the sensor data. "2D" refers to the planar disk primitive, as opposed to a volumetric 3D
+Gaussian.
 
 ## Pipeline
 
-Three stages, all on the GPU (no readback to the CPU per frame).
+Three stages, all GPU-side (no per-frame CPU readback).
 
-**1. Ingest.** Upload the depth and colour frames into GPU textures, pass the camera intrinsics.
+**1. Ingest.** Depth and colour frames are uploaded to GPU textures; camera intrinsics are
+passed in.
 
 **2. Depth to surfels (compute shader).**
-- **Bilateral filter:** denoise depth, keep the real edges.
-- **Kalman filter:** per-pixel smoothing over time. Steady when still, resets on motion so
-  things don't smear.
+- **Kalman filter:** per-pixel temporal smoothing of depth; stable when static, reset on motion
+  to avoid smearing.
 - **Back-projection:** depth to a 3D position.
-- **Normals:** finite differences off the neighbouring points.
-- **Edge detection:** depth jumps face the camera instead of stretching across the gap.
-- **Tangent + anisotropy:** how much to stretch/tilt each disk so it matches the surface.
+- **Normals:** finite differences over neighbouring points.
+- **Edge detection:** depth discontinuities are billboarded toward the camera rather than
+  stretched across the gap.
+- **Tangent + anisotropy:** per-axis disk stretch and orientation from the local surface.
 
-**3. Rasterize (vertex + fragment shader).** Each point becomes a quad, turned to face the
-surface and stretched into an ellipse, with a Gaussian falloff so the edges are soft. Drawn
-opaque and let the depth buffer sort out overlaps, so no per-frame sorting and no transparency
-mess. MSAA cleans up the edges.
+**3. Rasterise (vertex + fragment shader).** Each point is expanded to a quad, oriented to the
+surface and stretched into an ellipse, with a Gaussian falloff. Rendered opaque with overlaps
+resolved by the depth buffer — no per-frame sorting, no transparency ordering — and MSAA on
+edges.
 
-Two modes: the oriented disks, or plain camera-facing quads if you want to compare.
+Two modes are provided: the oriented disks, and plain camera-facing quads as a baseline.
 
 ## Results
 
-Media coming.
+A pre-planned route was recorded and replayed for each stream to keep the viewing path
+consistent between runs. All settings were held constant; only the feature under test was
+enabled/disabled. Object detection was CPU-bound throughout (no GPU/OpenVINO), so that overhead
+is included in its figures.
+
+Clips are 2x speed and loop.
+
+### Base point cloud
+
+**No Kalman**
+<p align="center"><img src="media/plc_no_kf.webp" alt="Base point cloud, no Kalman" width="600"></p>
+
+**Kalman**
+<p align="center"><img src="media/pcl_kf_enabled.webp" alt="Base point cloud, Kalman" width="600"></p>
+
+**Kalman + object detection**
+<p align="center"><img src="media/pcl_kf_objd_enabled.webp" alt="Base point cloud, Kalman + object detection" width="600"></p>
+
+### 2D Gaussian surfel splatting
+
+**No Kalman**
+<p align="center"><img src="media/2dgs_no_kf.webp" alt="2D Gaussian surfels, no Kalman" width="600"></p>
+
+**Kalman**
+<p align="center"><img src="media/2dgs_kf_enabled.webp" alt="2D Gaussian surfels, Kalman" width="600"></p>
+
+**Kalman + object detection**
+<p align="center"><img src="media/2dgs_kf_objd_enabled.webp" alt="2D Gaussian surfels, Kalman + object detection" width="600"></p>
+
+### Settings
+<p align="center"><img src="media/settings.png" alt="Inspector settings" width="600"></p>
